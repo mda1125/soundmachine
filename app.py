@@ -35,8 +35,33 @@ st.markdown("""
         font-size: 1.1rem;
         margin: 1rem 0;
     }
+    .logo-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin: 1rem 0 2rem 0;
+    }
+    .logo-img {
+        max-width: 200px;
+        height: auto;
+        border-radius: 50%;
+    }
     </style>
     """, unsafe_allow_html=True)
+
+# Display logo if it exists
+logo_files = ['logo.png', 'logo.jpg', 'logo.jpeg', 'logo.svg', 'leaf_blower_logo.png', 'leaf_blower_logo.jpg']
+logo_path = None
+for logo_file in logo_files:
+    if os.path.exists(logo_file):
+        logo_path = logo_file
+        break
+
+if logo_path:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image(logo_path, use_container_width=True)
+    st.markdown("---")
 
 # Title
 st.title("🍃 Leaf Blower Sound Machine")
