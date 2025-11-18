@@ -134,7 +134,7 @@ with col2:
     button_label = "▶️ Play" if not st.session_state.is_playing else "⏸️ Pause"
     if st.button(button_label, key="play_pause"):
         if not st.session_state.is_playing:
-            # Starting playback
+            # Starting playback - trigger audio immediately on button click (iOS requirement)
             st.session_state.is_playing = True
             current_time = time.time()
             if st.session_state.start_time is None:
@@ -142,6 +142,50 @@ with col2:
             else:
                 # Resume: adjust start_time to account for paused time
                 st.session_state.start_time = current_time - st.session_state.paused_time
+            
+            # Create and play audio immediately while we still have user interaction context
+            # This is critical for iOS Safari which blocks audio not triggered by direct user interaction
+            if st.session_state.audio_data_uri:
+                immediate_play_html = f"""
+                <audio id="leafBlowerAudio" loop playsinline style="display: none;"></audio>
+                <script>
+                    (function() {{
+                        var audio = document.getElementById('leafBlowerAudio');
+                        if (!audio) {{
+                            audio = document.createElement('audio');
+                            audio.id = 'leafBlowerAudio';
+                            audio.loop = true;
+                            audio.setAttribute('playsinline', 'true'); // Required for iOS
+                            audio.style.display = 'none';
+                            document.body.appendChild(audio);
+                        }}
+                        audio.src = '{st.session_state.audio_data_uri}';
+                        audio.volume = {st.session_state.volume};
+                        
+                        // Play immediately while we still have user interaction context
+                        // This is essential for iOS Safari
+                        var playPromise = audio.play();
+                        if (playPromise !== undefined) {{
+                            playPromise.then(function() {{
+                                console.log('Audio playing successfully (iOS compatible)');
+                                // Store start time for timer
+                                window.audioStartTime = Date.now();
+                            }}).catch(function(error) {{
+                                console.log('Immediate play failed:', error);
+                                // Retry once after a very short delay
+                                setTimeout(function() {{
+                                    audio.play().then(function() {{
+                                        window.audioStartTime = Date.now();
+                                    }}).catch(function(e) {{
+                                        console.log('Retry failed:', e);
+                                    }});
+                                }}, 50);
+                            }});
+                        }}
+                    }})();
+                </script>
+                """
+                st.components.v1.html(immediate_play_html, height=0)
         else:
             # Pausing playback
             st.session_state.is_playing = False
@@ -171,10 +215,10 @@ if st.session_state.is_playing:
         remaining = max(0, st.session_state.duration - elapsed)
         
         if remaining > 0:
-            # Create audio element and control in same HTML component
+            # Control existing audio element (created on button click for iOS compatibility)
+            # Don't try to start playback here - that must happen on button click for iOS
             if st.session_state.audio_data_uri:
                 audio_control_html = f"""
-                <audio id="leafBlowerAudio" loop style="display: none;"></audio>
                 <div id="timerDisplay"></div>
                 <script>
                     (function() {{
@@ -184,57 +228,41 @@ if st.session_state.is_playing:
                         var duration = {st.session_state.duration} * 1000; // Convert to milliseconds
                         var isPlaying = false;
                         
-                        // Create or get audio element
-                        if (!audio) {{
-                            audio = document.createElement('audio');
-                            audio.id = 'leafBlowerAudio';
-                            audio.loop = true;
-                            audio.style.display = 'none';
-                            document.body.appendChild(audio);
-                        }}
-                        
-                        // Set source if not already set
-                        if (!audio.src || !audio.src.includes('data:audio')) {{
-                            audio.src = '{st.session_state.audio_data_uri}';
-                        }}
-                        
-                        // Set volume
-                        audio.volume = {volume};
-                        
-                        // Start playing
-                        if (audio.paused) {{
-                            var playPromise = audio.play();
-                            if (playPromise !== undefined) {{
-                                playPromise.then(function() {{
-                                    console.log('Audio playing successfully');
-                                    isPlaying = true;
-                                    startTime = Date.now();
-                                    updateTimer();
-                                }}).catch(function(error) {{
-                                    console.log('Audio play error:', error);
-                                    // Retry after a short delay
-                                    setTimeout(function() {{
-                                        audio.play().then(function() {{
-                                            isPlaying = true;
-                                            startTime = Date.now();
-                                            updateTimer();
-                                        }}).catch(function(e) {{
-                                            console.log('Retry failed:', e);
-                                        }});
-                                    }}, 200);
-                                }});
+                        // Get existing audio element (should already exist from button click)
+                        if (audio) {{
+                            // Ensure playsinline attribute is set for iOS
+                            if (!audio.hasAttribute('playsinline')) {{
+                                audio.setAttribute('playsinline', 'true');
+                            }}
+                            
+                            // Update volume
+                            audio.volume = {volume};
+                            
+                            // Check if already playing (started from button click)
+                            if (!audio.paused) {{
+                                isPlaying = true;
+                                // Use stored start time from when play button was clicked
+                                if (!window.audioStartTime) {{
+                                    window.audioStartTime = Date.now();
+                                }}
+                                startTime = window.audioStartTime;
+                                updateTimer();
+                            }} else {{
+                                // Audio is paused - don't try to play here (iOS will block it)
+                                isPlaying = false;
                             }}
                         }} else {{
-                            // Already playing, just update volume
-                            audio.volume = {volume};
-                            isPlaying = true;
+                            // Audio element not found - user may need to click Play again
+                            console.warn('Audio element not found');
                         }}
                         
                         // Update timer display
                         function updateTimer() {{
                             if (!isPlaying) return;
                             
-                            var elapsed = Date.now() - startTime;
+                            // Use the stored start time (persists across reruns)
+                            var actualStartTime = window.audioStartTime || startTime;
+                            var elapsed = Date.now() - actualStartTime;
                             var remaining = Math.max(0, duration - elapsed);
                             
                             if (remaining > 0) {{
